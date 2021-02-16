@@ -1,0 +1,455 @@
+\documentclass{article} % For LaTeX2e
+\usepackage{latex_template, times}
+\usepackage{hyperref}
+\usepackage{url}
+\usepackage{amsmath}
+\usepackage{amssymb}
+\usepackage{stmaryrd}
+\usepackage{graphicx}
+\usepackage{subcaption}
+\usepackage[backend=biber]{biblatex}
+
+
+% command to make 3x3 matrix
+\newcommand{\makeMat}[9]{
+\begin{bmatrix} 
+    #1 & #2 & #3\\
+    #4 & #5 & #6\\
+    #7 & #8 & #9
+\end{bmatrix}
+}
+
+% command to make table for mean and sds
+\newcommand{\makeTab}[7]{
+\begin{tabular}{||c | | c | c | c ||} 
+ \hline
+               & FCNN & CNN & Actual\\ [0.5ex] 
+ \hline\hline
+ Mean & #1 & #2 & #3 \\ 
+ \hline
+ SD & #4 & #5 & \\
+ \hline
+ from Epoch & #6 & #7 &\\
+ \hline
+\end{tabular}
+}
+
+
+% command to create figures
+% to create a figure: \makeFigure{dataset}{with_T/no_T}{loss/accuracy/frobenius}
+% to ref a subfigure: \ref{fig:<dataset>_<with_T..>_<loss..>_<CNN/FCNN>}
+% to ref a figure: \ref{fig:<dataset>_<with_T..>_<loss..>}
+
+\newcommand{\makeFigure}[3]{
+\begin{figure}[h]
+% FC nn image vvvvvvvvvvvvvvvvvvvvvvvvvvv
+\begin{subfigure}{0.5\textwidth}
+\centering
+\includegraphics[width=1.0\linewidth]{LaTeX-template/Figures/#1_FC_#2_#3.png}
+\caption{Fully Connected Neural Network}
+\label{fig:#1_#2_#3_FCNN}
+\end{subfigure}
+% ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+% CNN image VVVVVVVVVVVVVVVVVVVVVVVVVVVVV
+\begin{subfigure}{0.5\textwidth}
+\centering
+\includegraphics[width=1.0\linewidth]{LaTeX-template/Figures/#1_CNN_#2_#3.png}
+\caption{Convolutional Neural Network}
+\label{fig:#1_#2_#3_CNN}
+\end{subfigure}
+% ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+% overall caption
+\caption{
+\ifstrequal{#3}{frobenius}{
+    Epoch under frobenius norm of both models on the #1 dataset
+}{
+    Epoch under #3 of both models on the #1 dataset, trained with\ifstrequal{#2}{no_T}{out}{} transition matrix
+}
+#1#2#3
+}
+\label{fig:#1_#2_#3}
+\end{figure}
+}
+
+\addbibresource{bibliography.bib} %Imports bibliography file
+
+\graphicspath{{figures/}}
+%\documentstyle[nips14submit_09,times,art10]{article} % For LaTeX 2.09
+
+\title{Assignment 2}
+
+\newcommand{\fix}{\marginpar{FIX}}
+\newcommand{\new}{\marginpar{NEW}}
+% - commands for math
+\newcommand{\PR}[1]{{P\left(#1\right)}}
+\newcommand{\PRh}[1]{{\widehat P\left(#1\right)}}
+\newcommand{\B}[1]{{\left(#1\right)}}
+\newcommand{\SB}[1]{{\left[#1\right]}}
+
+\DeclareMathOperator*{\argmin}{arg\,min}
+\DeclareMathOperator*{\argmax}{arg\,max}
+\newcommand{\needcite}{\textbf{[(Citation needed)]}\fix}
+\newcommand{\incomplete}[1]{\textbf{INCOMPLETE - #1}\fix}
+\newcommand{\notsure}{^*\fix}
+\newcommand{\Yh}{\widehat{Y}}
+\newcommand{\Th}{\widehat{T}}
+\newcommand{\Yn}{\widetilde{Y}}
+\newcommand{\noiseassumption}{assumption of independance of $X$ from noise }
+
+\nipsfinalcopy % Uncomment for camera-ready version
+
+\begin{document}
+
+\maketitle
+
+Professor: Tongliang Liu\\
+Group members: Alex Elias (UniKey: aeli0392, SID: 500407020) \& Luca Quaglia (UniKey: lqua3126, SID: 500175059)\\
+% STARTSECTION Abstract ------------------------------
+% Abstract [3]
+% - problem, methods, and organization
+\begin{abstract}
+
+Modern classification algorithms are designed to estimate labels based on data.
+Problems arise if the labels are untrustworthy or misleading.
+This paper takes a probabilistic approach to treating mislabelled given some assumptions about the distribution of mislabelled data.
+We solve two problems in such a manner: estimating the distribution of noisy data (given the assumptions) and training models given noisy data.
+\end{abstract}
+% STARTSECTION Introduction --------------------------
+% Introduction [6]
+% - the problem you intend to solve
+% - the importance of the problem
+\section{Introduction}
+Modern machine learning applications are fed datasets that have millions of labelled examples, however accurately labelling millions of images is expensive, often to the point of implausibility.
+Problems arise in areas such as object recognition - where the vast amount of data needed makes the problem expensive \cite{DL_robust} or medical imaging where experts are needed and can be unreliable increasing the cost of individual labels.
+\\\\
+Using the simple assumption that the probability of a label being incorrect is a function of only the true class, we call this assumption the \noiseassumption and is denoted by
+\begin{equation}
+\label{eqn:noise_assumption}
+\PR{\mbox{noise}\middle|X, Y}=\PR{\mbox{noise}\middle|Y}
+\end{equation}
+we will illustrate a method of estimating these probabilities for each class and how they can be used to improve model performance on data that is extremely noisy (with up to half of the labels being incorrect).\\\\
+We will then introduce a method to calculate an estimate $\PRh{\Yn\middle|Y}$ using a real-world dataset - a subset of 3 classes from the fashion MNIST dataset\cite{FMNIST} with introduced synthetic noise (that follows the assumption outlined above), and we will evaluate the effectiveness of this method by comparing with the true noise distribution that we generated the labels with. This entire process will be repeated for two different noise distributions to ensure the generalisation of the algorithm.
+\\\\
+We will then use our method on noise distribution estimation to estimate the noise distribution on a subset of a second dataset - the CIFAR dataset \cite{CIFAR}.
+\\\\
+Given noise distributions, we will then demonstrate how they can be used to train models that will perform very well considering the noise rates (often predicting the correct label more frequently then the noisy labels provided).
+
+\subsection{Notation in this report}
+Throughout this report we will denote $(\mathcal X,\,\mathcal Y)$ as the domain of datasets $(X, Y)$ for which each observation $(X_i,\,Y_i) \sim \PR{X,\,Y}$
+Labels with introduced noise will be denoted $\Yn$ while clean labels will be denoted $Y$. This implies that $\PR{Y_i = \Yn_i} = \PR{\mbox{noise}\middle|Y}$ if the \noiseassumption holds.
+Any time we have a probability or distribution that is an estimate we will denote it with $\PRh{\cdot}$
+\\\\
+Once models enter the arena, we will denote their predictions as $\Yh$. The \emph{true} transition matrix is denoted as $T$ while its estimate is denoted by $\Th$.
+The true value of $T$ is given by:
+\begin{equation}
+\label{eqn:true_transition}
+T = \begin{bmatrix} 
+    \PR{\Yn=1\middle|Y=1} & \PR{\Yn=1\middle|Y=2} & \dots & \PR{\Yn=1\middle|Y=d}\\
+    \PR{\Yn=2\middle|Y=1} & \PR{\Yn=2\middle|Y=2} & \dots & \PR{\Yn=2\middle|Y=d}\\
+    \vdots                & \vdots                &\ddots & \vdots               \\
+    \PR{\Yn=d\middle|Y=1} & \PR{\Yn=d\middle|Y=2} & \dots & \PR{\Yn=d\middle|Y=d}\\
+\end{bmatrix}
+\end{equation}
+and is occasionally referred to as the \emph{distribution of noise on $X$} while $\Th$ is given by
+\begin{equation}
+\label{eqn:est_transition}
+\Th = \begin{bmatrix} 
+    \PRh{\Yn=1\middle|Y=1} & \PRh{\Yn=1\middle|Y=2} & \dots & \PRh{\Yn=1\middle|Y=d}\\
+    \PRh{\Yn=2\middle|Y=1} & \PRh{\Yn=2\middle|Y=2} & \dots & \PRh{\Yn=2\middle|Y=d}\\
+    \vdots                 & \vdots                 &\ddots & \vdots                \\
+    \PRh{\Yn=d\middle|Y=1} & \PRh{\Yn=d\middle|Y=2} & \dots & \PRh{\Yn=d\middle|Y=d}\\
+\end{bmatrix}
+\end{equation}
+and denotes the \emph{estimated noise distribution on $X$}.
+\\\\
+$d$ will denote the dimensionality of the data such that $X_i \in \mathbb R^d$.
+    
+$\delta_{ab}$ will denote the Kronecker delta function defined as
+
+\begin{equation*}
+    \delta_{ab} = \left\{\begin{array}{cc}
+         1 &: a = b\\
+         0 &: a \ne b 
+    \end{array}
+    \right|
+\end{equation*}
+
+The domain of probability vectors of length $k$ will be denoted $\mathcal P^k$, where $p \in \mathcal P^k : \sum p = 1, p_i \ge 0$. It is worth noting that any $\delta_{ij}$ meets these criteria.
+% - \begin{equation*}
+% -     X \in \mathcal X : X_i \in \mathbb R^d \sim \PR{Y\middle| X=X_i}
+% - \end{equation*}
+
+
+% STARTSECTION Related Work ------------------------------
+% Previous work [8]
+% - previous relevant methods used in literature
+% - their advantages and disadvantages
+\section{Related Work}
+% talk about backward vs forward methods with transition matrix
+There have been many studies into perceptron designs that can tolerate noise following the \noiseassumption.
+A survey of noise-tolerant variants of perceptron algorithms found varying amounts of success limited to the perceptron estimator domain.
+Learning from data-sets affected by label noise has been studied in various ways and in different domains. Noise of three types has been investigated: random classification noise, class dependent noise and class and instance dependent noise. 
+The first type of noise is the most studied and analysed. Very early on, at the end of the '80s, it was shown that random classification noise increases the number of examples for identifying a model in the probably approximately correct framework \cite{RCN_PAC}. To deal with random classification noise one avenue is to develop robust models and robust surrogate loss functions have been developed. Another avenue is to try to filter out noisy examples. This method has the drawback of potentially eliminating many useful examples. Still another avenue is to explicitly model the effect of label noise and inferring its distribution \cite{RCN_review}.
+The second type of noise has been studied more recently \cite{NoisyLabelsReweighting} and it is the framework used in this work. Liu and Tao proposed a way to exploit the statistical characteristics of the label noise to re-weight the probabilities for the various classes outputted by a classification model.    
+The re-weighting of the probabilities can be achieved by a forward or a backward method \cite{Forward}. Given an estimate of the transition matrix transforming probabilities for clean labels into probabilities for noisy labels, the forward method inserts the transition matrix between the output of the model and the loss function. The net effect is to train a model that is suitable for classifying clean labels, even if the loss function is computed on the noisy data-set. In the backward method the inverse of the transition matrix is used to get the clean labels probabilities after training the model on the noisy data-set.    
+
+% STARTSECTION Methods ------------------------------------
+
+% Label  noise  methods  with  known  fliprates [23]
+% - pre-processing (if any)
+% - label noise methods’ formulation
+% - cross-validation  method  for  model  selectionor avoiding overfitting (if any)
+% - experiments
+% - discussions
+\section{Methods}
+\subsection{Problem Setup}
+% talk about the datasets given and how they differ
+We have taken 2 datasets - a subset of 3 classes from the fashion MNIST dataset \cite{FMNIST} and a subset of 3 classes from the CIFAR dataset \cite{CIFAR}.
+Each dataset was taken with two subsets - a subset with synthetic noise (that followed some distribution $\PR{\Yh \middle| Y}$) and a subset of the data that had entirely clean labels.
+\\\\
+The Fashion MNIST was used twice, each time with different distributions of noise, where the noise is known.
+The training subset (subset with synthetic label noise) contained 18000 training examples of $28\times 28$ and the clean subset (subset with no label noise) had 3000 examples.
+\\\\
+The CIFAR dataset was only used once, with an unknown noise distribution.
+The noisy subset had 15000 training examples (subset with synthetic label noise) and the testing subset (without noise) had 3000.
+% define terms such as noise distribution
+\subsection{Models used}
+% describe models that we used.
+In this analysis, we use two models to demonstrate the general applications of this method of noise distribution estimation and model training given a noise distribution. Models that train with an iterative process are clearer to demonstrate mathematically so we have decided to use two neural networks - a fully connected neural network and a convolutional neural network.
+\\\\
+\subsubsection{Fully Connected Neural Network}
+The \textbf Fully \textbf connected \textbf neural \textbf network (FCNN) we used used the pyramid rule\cite{PYRAMID_RULE} to decide the number of hidden nodes at each layer. The relu activation function \cite{ReLU} was used between layers.
+For the MNIST datasets we used 2 hidden layers of sizes 123 and 19. A SoftMax computed the final class probabilities.
+\\\\
+The FCNN used for the CIFAR dataset had 4 hiden layers of sizes 305, 305, 30, 30. A SoftMax computed the final class probabilities.
+\subsubsection{\textbf Convolutional \textbf Neural \textbf Network (CNN)}
+The convolutional network structure we used had 
+a convolutional layer (6 filters, size 5, stride 1), an average pooling layer (size 2, stride 2), a convolutional layer (10 filters, size 5, stride 1), an average pooling layer (size 2, stride 2) and two fully connected layers (size 160 and 22) followed by a SoftMax.
+\\\\
+Any time we train a model, we will use only the training set (noisy labels) cross validated with 10 folds. This will allow us to compute point estimates and standard deviations for all values to decrease the likelihood of getting 'unlucky' - having an unlikely result represent our findings.
+\subsection{Distribution of noise estimation}
+% talk about estimating the noise distribution (transition matrix) given noisy data
+Suppose we have access to only a noisy dataset, $\B{X, \Yn}$ and we want to determine $\PR{\Yn \middle| Y}$. Let us also suppose that the dataset is sufficiently large that we can estimate its noisy label distribution conditional on X, $\PR{\Yn \middle| X}$. With the application of the law of total probability:
+\begin{equation*}
+    \PR{\Yn \middle| X} = \sum\limits_{c \in Y} \PR{\Yn \middle| X, Y=c} \PR{Y=c \middle| X}
+\end{equation*}
+But, with the \noiseassumption (Equation \ref{eqn:noise_assumption}) we have
+\begin{equation}
+\label{eqn:law_tot_prob_1}
+    \PR{\Yn \middle| X} = \sum\limits_{c \in Y} \PR{\Yn \middle| Y=c} \PR{Y = c \middle| X}
+\end{equation}
+If we can find an observation $x$ for which its class is known to be $t$, IE $\PR{Y=c\middle|X=x} = \delta_{ct}$ then \ref{eqn:law_tot_prob_1} simplifies to
+\begin{equation}
+    \label{eqn:anchor}
+    \PR{\Yn \middle| X=x} = \PR{\Yn \middle| Y=t}
+\end{equation}
+In this way, we call $x$ an \emph{anchor point} as it allows us to predict the probability distribution of noise on some class.
+In reality, we do not have access to such a datapoint \emph{or} the true distribution of noise, so we estimate them using a model.
+\\\\
+Theoretically, any model that can output a probability distribution can be used as $\PRh{\Yn \middle| X}$, which would result in the noise distribution estimate $\PRh{\Yn \middle| Y}$.
+Our neural network implementations fit the description (provided a final activation layer provides a 1-summing vector of the correct length - we used the softmax function)
+\\\\
+If we suppose that the \emph{expected} class for an observation is known, we can use the law of large numbers to include multiple anchor points per class and averaging the resultant probability distributions\footnote{Future studies could observe the effects of the weighted averaging based on the confidence of the model, or on the number of standard deviations that anchor points distribution is from the mean of the estimate.}.
+\subsection{Model training with known distribution of noise}
+% talk about evaluation of this method with the true noise distribution
+% talk about how to train a model with (assumed to be true) transition matrix
+Now, suppose we have a known distribution of label noise $\PR{\Yn\middle|Y}$, in the form of a transition matrix $T$ and a model structure, $f_\theta\B{x} : \mathcal X \mapsto \mathcal P^d$ where $\mathcal X$ is the problem domain.
+Let us further suppose that we have a surrogate loss function $l\B{\Yh, Y}$ which is used to optimize the parameters $\theta$ of $f$ to minimize the loss function.
+\\\\
+Training models in this way normally takes the form of $\argmin\limits_\theta l\B{f_\theta\B{X}, Y}$ to achieve the best predictor for $Y$.
+For this problem however, we only have $\Yn$ and fitting $\argmin\limits_\theta l\B{f_\theta\B{X}, \Yn}$ would result in a model that attempts to predict $\Yn$.
+To solve this problem, we treat $\Yn$ as a probability distribution $\PR{\Yn \middle| X}$.
+Plugging into equation \ref{eqn:law_tot_prob_1}, we get a way to convert $\PR{Y \middle| X}$ to $\PR{\Yn \middle| X}$.
+Notice, that this is equivalent to $
+T \cdot \B{\PR{Y_1 \middle| X},\,\PR{Y_2 \middle|X},\,\dots\,,\,\PR{Y_d\middle|X}}^T
+$.
+Using this information, we can re-weight the output of the model $f$ in the loss function $l$ to optimize for the non-noisy label space instead of the noisy labels:
+\begin{equation}
+    l\B{T \cdot f_\theta\B{X},\, \Yn}
+    \label{eqn:noise_correction}
+\end{equation}
+\\\\
+To take an intuition from the mathematics, the model attempts to predict \emph{the correct column} of the transition matrix to return, instead of the noisy label.
+Since $E_{X = x}\SB{\Yn} = \PR{\Yn \middle| X=x} =$ \emph{column $Y_i$ of the transition matrix}, the function is rewarded for estimating the true Y label (the index of the column)
+
+
+
+
+
+
+% SECTIONSTART Experiments -------------------------------------------
+\clearpage
+\section{Experiments}
+\subsection{Estimating the distribution of noise}
+% talk about the MNIST noise estimates
+We trained the FCNN and CNN models on the noisy dataset for both MNIST5 and MNIST6. The training and validation loss for both models are presented in figures \ref{fig:FashionMNIST5_no_T_loss} and \ref{fig:FashionMNIST6_no_T_loss}.
+As expected, the models were unable to obtain a high accuracy before beginning to overtrain\footnote{This is expected because 50\% and 60\% of the labels do not conform to the data distribution, instead being random making them not dependant on the data - the model has no hope other then to 'guess' them. Theoretically, the maximum accuracy it could obtain would be to correctly guess the 50\% or 40\% labels + guess the others correctly ${1 \over 3}$ of the time}.
+The accuracy plot for the FC model (figures \ref{fig:FashionMNIST5_no_T_accuracy} and \ref{fig:FashionMNIST6_no_T_accuracy}) show a similar story, but much less pronounced\footnote{This may be due to the effect of taking the argmax and ignoring the absolute values, the model is predicting probabilities that are not very high on the validation set and high probabilities on the training set.}.
+This gives us an idea of when the model is no longer representing the distribution of the data and is training on noise within the specific examples in the training set, meaning the difference (by any metric other then 0-1 loss) is large.
+% talk about when to stop fitting the model if you dont have the information of the true noise distribution, with the benefit of the frobenius norm.
+\\
+\makeFigure{FashionMNIST5}{no_T}{loss}
+\makeFigure{FashionMNIST6}{no_T}{loss}
+\\
+We used the estimation procedure defined in section 3.3 to estimate the noise.
+As intuition would dictate, observing the difference between $\Th$ and $T = \left\|\Th - T\right\|_{2,2}$ (figures \ref{fig:FashionMNIST5_no_T_frobenius} and \ref{fig:FashionMNIST6_no_T_frobenius}) show that the estimates becomes closest to the true value at around the same time as the validation loss stops decreasing.
+%While the difference is not as pronounced for figures \ref{fig:FashionMNIST6_no_T_frobenius_CNN}, \ref{fig:FashionMNIST6_no_T_loss_CNN} and  \ref{fig:FashionMNIST5_no_T_frobenius_CNN}, \ref{fig:FashionMNIST5_no_T_loss_CNN}, the number of epochs for which the norm is lowest is quite wide, giving a wider window for stopping the algorithm before the model starts performing poorly.
+\\\\
+The estimates achieved were fairly close to the true values as shown in figure \ref{tab:FashionMNIST5_Est_T} and \ref{tab:FashionMNIST6_Est_T}.
+\makeFigure{FashionMNIST5}{no_T}{frobenius}
+\makeFigure{FashionMNIST6}{no_T}{frobenius}
+% talk about the best estimate for the noise distribution on the CIFAR dataset
+\\\\
+Using the knowledge gained above about how to estimate the noise distribution, we are able to do the same process without the benefit of the frobinius norm.
+By taking the transition matrix when the validation loss is no longer decreasing, a fairly accurate estimate of the distribution is achieved.
+Figure \ref{fig:CIFAR_no_T_loss} shows the loss during training on the noisy labels for the CIFAR dataset.
+Estimates of the transition matrix were taken at 30 epochs for both models, as this is where the models stopped improving. Figure \ref{tab:CIFAR_Est_T} shows the estimates are quite similar. Figure \ref{fig:CIFAR_no_T_accuracy} shows the training and validation accuracy over epochs.
+\makeFigure{CIFAR}{no_T}{loss}
+
+
+
+\clearpage
+% ----------------------------------------------------------------
+\subsection{Model performance with known distribution of noise}
+% using the true noise distributions with the method for training model
+Once the noise distributions are known, we can modify the loss function as defined in equation \ref{eqn:noise_correction} to train the model to predict the true labels. Figures \ref{fig:FashionMNIST5_with_T_accuracy} and \ref{fig:FashionMNIST6_with_T_accuracy} show the accuracy on the test set over epochs. The results are astonishing, getting about 90\% of the predictions correct for both model architectures. It appears as though the FashionMNIST6 CNN model has one or two models that have not finished training (figure \ref{fig:FashionMNIST6_with_T_accuracy_CNN}) but it is still up at around 60\% and still increasing.
+Figures \ref{fig:FashionMNIST5_with_T_loss} and \ref{fig:FashionMNIST6_with_T_loss} show the training loss, which tells a similar story.
+
+\makeFigure{FashionMNIST5}{with_T}{accuracy}
+\makeFigure{FashionMNIST6}{with_T}{accuracy}
+
+% talk about the MNIST models prediction accuracy on the test set with training through the transition matrix
+\subsection{Model performance with estimated distribution of noise}
+% talk about the CIFAR models prediction accuracy on the test set with training through the transition matrix
+The models were trained to predict the noisy CIFAR examples as well.
+With this dataset however we did not have access to the true distribution, so we must use our estimate. Each model used the estimate it estimated. The results are shown in \ref{fig:CIFAR_with_T_accuracy} and \ref{fig:CIFAR_with_T_loss} for accuracy and loss respectively.
+\\
+\makeFigure{CIFAR}{with_T}{accuracy}
+\makeFigure{CIFAR}{with_T}{loss}
+\\
+We also ran the FashionMNIST datasets with their estimated noise distributions. Figures \ref{fig:FashionMNIST5_with_Te_loss} and \ref{fig:FashionMNIST6_with_Te_loss} show the losses and Figures
+\ref{fig:FashionMNIST5_with_Te_accuracy},
+\ref{fig:FashionMNIST6_with_Te_accuracy} show the accuracy. It is clear that the estimation matrices are \emph{good enough} to achieve much higher accuracy then if you were to not use our method.
+\\\\
+These results makes it clear that even through no known examples of values for the dataset, the methods described in the methods section of this paper can achieve a much better then the almost random guessing you would get with the FashionMNIST6 and FashionMNIST5 datasets. The estimated noise distribution for CIFAR also indicated that the labels were quite close to random, (the noise estimates almost always under-estimated the amount of noise, as is evident in figures \ref{tab:FashionMNIST5_Est_T} and \ref{tab:FashionMNIST6_Est_T})
+% talk about MNIST models prediction accuracy when using the estimated noise (IF WE DO IT)
+\section{Conclusion}
+
+We have outlined methods to train models with noisy labels given a noise distribution, and we have also provided a method to predict a noise distribution if it is unknown (as is most likely the case in real-world scenarios). We have demonstrate these methods capabilities through 3 different datasets, two where the noise is known and 1 where the noise is unknown. Even with the unknown noise (and the more difficult to predict dataset) we achieve an accuracy of 60\% with low dimensionality.
+\\\\
+Future work can be done in both methods. Most notably, the method of noise distribution estimation relies on anchor points to estimate the columns of the transition matrix. We have assumed that the anchor points that are estimated with highest probability by the model the predictions are the same as the labels, but this is not necessarily the case. If the distributions on $Y$ are very different to other classes (as was the case for the FashionMNIST5 dataset) this may have a detremental effect on the prediction of the noise distributions. We would like to revisit this in the future to examine adversarial-like attacks on this method to see how robust it is to this problem.
+\\\\
+We took the average of 10 highest probability classes on the anchor points to estimate the transition matrix, but did not examine the standard deviation within estimates for the transition matrix (only between cross validation folds). This may provide some further insight into the problem.
+\\\\
+
+\begin{appendix}
+\section{Appendix: Code instructions}
+We have provided 6 Google Colab notebooks: two for each data-set, one for the fully connected neural network and one for the convolutional neural network.The code expects the datasets in a subfolder called "dataset".  
+
+
+\clearpage
+\subsection{Figures}
+% Figures
+\makeFigure{FashionMNIST5}{no_T}{accuracy}
+\makeFigure{FashionMNIST6}{no_T}{accuracy}
+\makeFigure{CIFAR}{no_T}{accuracy}
+
+% tables with means and SDs of transition matrices
+\begin{figure}
+\centering
+\makeTab{
+% mean FCNN
+ \makeMat{0.56}{0.16}{0.27}{0.27}{0.58}{0.20}{0.17}{0.26}{0.53}
+}{
+% mean CNN
+ \makeMat{0.60}{0.16}{0.25}{0.25}{0.60}{0.16}{0.15}{0.24}{0.59}
+}{
+% actual
+\begin{bmatrix} 
+    0.5 & 0.2 & 0.3\\
+    0.3 & 0.5 & 0.2\\
+    0.2 & 0.3 & 0.5
+\end{bmatrix}
+}{
+% sd FCNN
+ \makeMat{0.02}{0.01}{0.01}{0.03}{0.02}{0.02}{0.03}{0.02}{0.03}
+}{
+% sd CNN
+ \makeMat{0.03}{0.01}{0.03}{0.02}{0.03}{0.02}{0.02}{0.02}{0.03}
+}{
+% from epoch FCNN
+10
+}{
+% from epoch CNN
+75
+}
+\caption{Estimated FashionMNIST5 noise distribution}
+\label{tab:FashionMNIST5_Est_T}
+\end{figure}
+
+\begin{figure}
+\centering
+\makeTab{
+% mean FCNN
+\makeMat{0.41}{0.30}{0.30}{0.29}{0.40}{0.31}{0.30}{0.30}{0.39}
+}{
+% mean CNN
+\makeMat{0.44}{0.29}{0.30}{0.27}{0.44}{0.28}{0.29}{0.27}{0.42}
+}{
+% actual
+\begin{bmatrix} 
+    0.4 & 0.3 & 0.3\\
+    0.3 & 0.4 & 0.3\\
+    0.3 & 0.3 & 0.4
+\end{bmatrix}
+}{
+% sd FCNN
+\makeMat{0.03}{0.02}{0.02}{0.02}{0.02}{0.01}{0.02}{0.02}{0.02}
+}{
+% sd CNN
+\makeMat{0.01}{0.01}{0.02}{0.01}{0.01}{0.03}{0.01}{0.02}{0.02}
+}{
+% from epoch FCNN
+8
+}{
+% from epoch CNN
+60
+}
+\caption{Estimated FashionMNIST6 noise distribution}
+\label{tab:FashionMNIST6_Est_T}
+\end{figure}
+
+\begin{figure}
+\centering
+\makeTab{
+\makeMat{0.40}{0.33}{0.29}{0.34}{0.38}{0.29}{0.26}{0.29}{0.41}
+}{
+\makeMat{0.41}{0.32}{0.27}{0.33}{0.40}{0.28}{0.27}{0.28}{0.44}
+}{(unknown)}{
+\makeMat{0.02}{0.04}{0.02}{0.02}{0.02}{0.02}{0.03}{0.03}{0.02}
+}{
+\makeMat{0.03}{0.02}{0.02}{0.02}{0.03}{0.02}{0.02}{0.02}{0.04}
+}{
+30}{30}
+\caption{Estimated CIFAR noise distribution}
+\label{tab:CIFAR_Est_T}
+\end{figure}
+
+\makeFigure{FashionMNIST5}{with_Te}{loss}
+\makeFigure{FashionMNIST6}{with_Te}{loss}
+\makeFigure{FashionMNIST5}{with_Te}{accuracy}
+\makeFigure{FashionMNIST6}{with_Te}{accuracy}
+
+\makeFigure{FashionMNIST5}{with_T}{loss}
+\makeFigure{FashionMNIST6}{with_T}{loss}
+ 
+\end{appendix}
+
+\clearpage
+\printbibliography
+\end{document}
+
+%We will construct $T$ from this distribution, and attempt to re-construct it from the noisy data $\Yn$.
+%We will attempt to train a model using the data and noisy labels $\B{X, \Yn}$ such that it represents an estimate of the distribution of the noisy data $\PRh{\Yn \middle| X}$.
+%Given this estimate distribution, we can then use a clean datapoint $x$ with label $c$ to estimate the noise rate as $\PRh{\Yn \middle| Y=c} = \PRh{\Yn \middle| X=x}$ which will give us a probability distribution over $\Yn$ for $Y=c$.
+Since we do not have any clean datapoints (in our training/validation sample)
